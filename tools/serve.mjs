@@ -86,7 +86,7 @@ async function complete(spec) {
 }
 
 const deadline = Date.now() + maxRuntimeMs
-let processed = 0
+let fatal = null
 
 while (Date.now() < deadline) {
   let task
@@ -94,7 +94,7 @@ while (Date.now() < deadline) {
     task = await nextTask()
   }
   catch (err) {
-    console.error(`[serve] ${err.message}`)
+    fatal = err
     break
   }
   if (!task) {
@@ -103,11 +103,18 @@ while (Date.now() < deadline) {
   }
   try {
     await resolveTask(task.id, 'completed', await complete(taskSpec(task)))
-    processed++
   }
   catch (err) {
     await resolveTask(task.id, 'failed', String(err?.message ?? err)).catch(() => {})
   }
 }
 
-console.error(`[serve] done — ${processed} task(s)`)
+// Silent on success: an empty poll — the common once-a-minute case — prints
+// nothing and exits 0, so the agent's cron runner sends no DM. Only a fatal
+// infra error (the SP queue is unreachable) is loud: stderr + non-zero exit,
+// so the owner is pinged exactly when the worker itself is broken. Per-task
+// outcomes report back to the SP; the run is recorded in troop either way.
+if (fatal) {
+  console.error(`[serve] ${fatal.message}`)
+  process.exitCode = 1
+}
